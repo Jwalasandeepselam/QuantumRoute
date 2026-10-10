@@ -65,7 +65,7 @@ def admin_dashboard():
             location=[node['lat'], node['lon']],
             popup=node['label'],
             tooltip=node['label'],
-            icon=folium.Icon(color="blue")
+            icon=folium.Icon(color="darkred" if node.get('priority') == 'Code Red' else "blue", icon="warning-sign" if node.get('priority') == 'Code Red' else "info-sign")
         ).add_to(m)
         
     # Plot live drivers
@@ -94,46 +94,83 @@ def admin_dashboard():
                 
     st.write("---")
     
+    driver_usernames = [d['username'] for d in drivers] if drivers else ["driver1", "driver2"]
+    selected_drivers = st.multiselect("🚑 Select Drivers for Dispatch", driver_usernames, default=driver_usernames[:1] if driver_usernames else [])
+    
     col1, col2 = st.columns(2)
     with col1:
         if st.button("⚛️ Calculate Quantum VRP Route", use_container_width=True, type="primary"):
             if len(nodes) < 3:
                 st.warning("Please add at least 3 hubs.")
+            elif not selected_drivers:
+                st.warning("Please select at least one driver.")
             else:
-                with st.spinner("Running QAOA Quantum Optimization..."):
+                with st.spinner("Running QAOA + VRP Clustering..."):
                     coords = [[n['lat'], n['lon']] for n in nodes]
-                    dist_matrix = osrm_helper.get_distance_matrix(coords)
-                    best_route = quantum_solver.solve_route(dist_matrix)
                     
-                    route_geometries = []
-                    route_durations = []
-                    for i in range(len(best_route) - 1):
-                        idx1 = best_route[i]
-                        idx2 = best_route[i+1]
-                        geom, dur = osrm_helper.get_route_geometry(coords[idx1][1], coords[idx1][0], coords[idx2][1], coords[idx2][0])
-                        route_geometries.append(geom)
-                        route_durations.append(dur)
+                    # 1. Clustering (VRP)
+                    k = len(selected_drivers)
+                    if k >= len(coords):
+                        clusters = [[i] for i in range(len(coords))]
+                    else:
+                        import math, random
+                        random.seed(42)
+                        centroids = random.sample(coords, k)
+                        clusters = [[] for _ in range(k)]
+                        for _ in range(10):
+                            clusters = [[] for _ in range(k)]
+                            for i, c in enumerate(coords):
+                                dists = [math.hypot(c[0]-cen[0], c[1]-cen[1]) for cen in centroids]
+                                clusters[dists.index(min(dists))].append(i)
+                            for i in range(k):
+                                if clusters[i]:
+                                    centroids[i] = (sum(coords[j][0] for j in clusters[i])/len(clusters[i]), sum(coords[j][1] for j in clusters[i])/len(clusters[i]))
+                        clusters = [c for c in clusters if c] # remove empty
                     
-                    # For prototype, assign the full route to 'driver1'. (In real VRP, we'd split it)
-                    db.update_driver_route("driver1", best_route, route_geometries, route_durations)
-                    
-                    # Initialize driver1 at the first node
-                    first_node_idx = best_route[0]
-                    db.update_driver_location("driver1", coords[first_node_idx][0], coords[first_node_idx][1], 0)
-                    
+                    # 2. Quantum Routing for each Driver
+                    for k_idx, cluster_indices in enumerate(clusters):
+                        if k_idx >= len(selected_drivers): break
+                        driver_username = selected_drivers[k_idx]
+                        
+                        cluster_coords = [coords[i] for i in cluster_indices]
+                        sub_dist_matrix = osrm_helper.get_distance_matrix(cluster_coords)
+                        sub_route = quantum_solver.solve_route(sub_dist_matrix)
+                        global_route = [cluster_indices[i] for i in sub_route]
+                        
+                        route_geometries = []
+                        route_durations = []
+                        for i in range(len(global_route) - 1):
+                            idx1 = global_route[i]
+                            idx2 = global_route[i+1]
+                            geom, dur = osrm_helper.get_route_geometry(coords[idx1][1], coords[idx1][0], coords[idx2][1], coords[idx2][0])
+                            route_geometries.append(geom)
+                            route_durations.append(dur)
+                            
+                        db.update_driver_route(driver_username, global_route, route_geometries, route_durations)
+                        first_node_idx = global_route[0]
+                        db.update_driver_location(driver_username, coords[first_node_idx][0], coords[first_node_idx][1], 0)
+                        
                     st.success("✅ VRP Route Optimized! Dispatched to Fleet.")
     with col2:
         if st.button("🗑️ Clear All Emergencies", use_container_width=True):
             db.clear_nodes()
             st.rerun()
             
-    st.subheader("Active Emergencies")
+    st.subheader("📋 Hub Management (Active Emergencies)")
     for n in nodes:
-        c1, c2 = st.columns([4, 1])
-        c1.write(f"📍 {n['label']} (Lat: {n['lat']:.4f}, Lon: {n['lon']:.4f})")
-        if c2.button("Delete", key=f"del_{n['id']}"):
-            db.delete_node(n['id'])
-            st.rerun()
+        with st.container():
+            c1, c2, c3 = st.columns([3, 2, 1])
+            new_label = c1.text_input("Name", value=n['label'], key=f"name_{n['id']}")
+            new_priority = c2.selectbox("Priority", ["Normal", "Code Red"], index=0 if n.get('priority', 'Normal') == 'Normal' else 1, key=f"pri_{n['id']}")
+            
+            # If changed, update DB
+            if new_label != n['label'] or new_priority != n.get('priority', 'Normal'):
+                db.update_node(n['id'], new_label, new_priority)
+                st.rerun()
+                
+            if c3.button("Delete", key=f"del_{n['id']}"):
+                db.delete_node(n['id'])
+                st.rerun()
 
 def driver_dashboard():
     st.header(f"🚑 Mobile Interface ({st.session_state.username})")

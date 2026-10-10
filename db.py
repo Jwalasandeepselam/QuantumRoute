@@ -54,15 +54,22 @@ def init_db():
 def get_nodes():
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT id, lat, lon, label FROM nodes")
+    c.execute("SELECT id, lat, lon, label, priority FROM nodes")
     rows = c.fetchall()
     conn.close()
-    return [{"id": r[0], "lat": r[1], "lon": r[2], "label": r[3]} for r in rows]
+    return [{"id": r[0], "lat": r[1], "lon": r[2], "label": r[3], "priority": r[4] if len(r)>4 and r[4] else "Normal"} for r in rows]
 
 def add_node(lat, lon, label):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("INSERT INTO nodes (lat, lon, label) VALUES (?, ?, ?)", (lat, lon, label))
+    c.execute("INSERT INTO nodes (lat, lon, label, priority) VALUES (?, ?, ?, 'Normal')", (lat, lon, label))
+    conn.commit()
+    conn.close()
+
+def update_node(node_id, label, priority):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE nodes SET label=?, priority=? WHERE id=?", (label, priority, node_id))
     conn.commit()
     conn.close()
 
