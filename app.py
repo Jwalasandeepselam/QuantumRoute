@@ -67,27 +67,41 @@ def admin():
     active = sum(1 for d in drivers if d["lat"] is not None)
     st.markdown(f'<div class="panel mist"><div class="eyebrow">Command center / fleet preparation</div><h1 class="section" style="font-size:42px">Build a route the field team can trust.</h1><p class="copy">Place emergencies, set their priority, and allocate the response fleet across validated road geometry.</p><div class="stats"><div class="stat"><b>{len(nodes)}/15</b><span>Active emergencies</span></div><div class="stat"><b>{len(drivers)}</b><span>Drivers available</span></div><div class="stat"><b>{active}</b><span>Live locations</span></div></div></div>', unsafe_allow_html=True)
     m = folium.Map([20.5937, 78.9629], zoom_start=5, tiles="OpenStreetMap")
-    for node in nodes: folium.Marker([node["lat"],node["lon"]], tooltip=node["label"], icon=folium.Icon(color="darkred" if node["priority"] == "Code Red" else "blue")).add_to(m)
+    for node in nodes: 
+        if node["label"] == "Depot":
+            folium.Marker([node["lat"],node["lon"]], tooltip=node["label"], icon=folium.Icon(color="black", icon="home")).add_to(m)
+        else:
+            folium.Marker([node["lat"],node["lon"]], tooltip=node["label"], icon=folium.Icon(color="darkred" if node["priority"] == "Code Red" else "blue")).add_to(m)
     for driver in drivers:
+        state = db.get_driver_state(driver["username"])
+        if state and state["route_geometries"]:
+            for geom in state["route_geometries"]: folium.PolyLine(geom, color="#8b8b8b", weight=4, dash_array="6").add_to(m)
+            for geom in state["route_geometries"][:state["current_stop_index"]]: folium.PolyLine(geom, color="#2b59d1", weight=5).add_to(m)
         if driver["lat"] is not None: folium.Marker([driver["lat"],driver["lon"]], tooltip=f'{driver["username"]} / live', icon=folium.Icon(color="red",icon="ambulance",prefix="fa")).add_to(m)
     clicked = st_folium(m, width=None, height=500, returned_objects=["last_clicked"], key="command_map")
     if clicked and clicked.get("last_clicked"):
         point = clicked["last_clicked"]; lon, lat = osrm_helper.get_nearest_road(point["lng"], point["lat"])
-        if len(nodes) < 15 and not any(abs(n["lat"]-lat)<.0001 and abs(n["lon"]-lon)<.0001 for n in nodes): db.add_node(lat, lon, f"Emergency {len(nodes)+1}"); st.rerun()
+        label = "Depot" if len(nodes) == 0 else f"Emergency {len(nodes)}"
+        if len(nodes) < 15 and not any(abs(n["lat"]-lat)<.0001 and abs(n["lon"]-lon)<.0001 for n in nodes): db.add_node(lat, lon, label); st.rerun()
     selected = st.multiselect("Select drivers for dispatch", [d["username"] for d in drivers], default=[d["username"] for d in drivers[:1]])
     a,b = st.columns([3,1]); dispatch = a.button("Calculate fleet route  →", use_container_width=True); clear = b.button("Clear emergencies", use_container_width=True)
     if clear: db.clear_nodes(); st.rerun()
     if dispatch:
-        if len(nodes) < 3 or not selected: st.warning("Add at least three emergencies and select a driver.")
+        if len(nodes) < 3 or not selected: st.warning("Add a Depot, at least two emergencies, and select a driver.")
         else:
             with st.spinner("Allocating the fleet across the road network…"):
-                coords = [[n["lat"],n["lon"]] for n in nodes]
+                coords = [[n["lat"],n["lon"]] for n in nodes[1:]]
                 for username, group in zip(selected, clusters(coords, len(selected))):
-                    route = [group[i] for i in quantum_solver.solve_route(osrm_helper.get_distance_matrix([coords[i] for i in group]))]
+                    group_indices = [0] + [i + 1 for i in group]
+                    sub_coords = [[nodes[idx]["lat"], nodes[idx]["lon"]] for idx in group_indices]
+                    sub_route = quantum_solver.solve_route(osrm_helper.get_distance_matrix(sub_coords))
+                    zero_idx = sub_route.index(0)
+                    sub_route = sub_route[zero_idx:] + sub_route[:zero_idx]
+                    route = [group_indices[i] for i in sub_route]
                     geoms, durations = [], []
                     for start, end in zip(route, route[1:]):
-                        geom, duration = osrm_helper.get_route_geometry(coords[start][1],coords[start][0],coords[end][1],coords[end][0]); geoms.append(geom); durations.append(duration)
-                    db.update_driver_route(username, route, geoms, durations); db.update_driver_location(username, coords[route[0]][0], coords[route[0]][1], 0)
+                        geom, duration = osrm_helper.get_route_geometry(nodes[start]["lon"],nodes[start]["lat"],nodes[end]["lon"],nodes[end]["lat"]); geoms.append(geom); durations.append(duration)
+                    db.update_driver_route(username, route, geoms, durations); db.update_driver_location(username, nodes[route[0]]["lat"], nodes[route[0]]["lon"], 0)
             st.success("Fleet routes dispatched.")
     st.markdown('<div class="panel"><div class="eyebrow">Emergency management</div><h2 class="section">Name and prioritize every active incident.</h2></div>', unsafe_allow_html=True)
     for node in nodes:
@@ -112,7 +126,11 @@ def driver():
     m=folium.Map([nodes[route[0]]["lat"],nodes[route[0]]["lon"]],zoom_start=13,tiles="OpenStreetMap")
     for geom in geoms:folium.PolyLine(geom,color="#8b8b8b",weight=5,dash_array="6").add_to(m)
     for geom in geoms[:current]:folium.PolyLine(geom,color="#2b59d1",weight=6).add_to(m)
-    for i,index in enumerate(route):folium.Marker([nodes[index]["lat"],nodes[index]["lon"]],tooltip=f'Stop {i+1}: {nodes[index]["label"]}',icon=folium.Icon(color="blue")).add_to(m)
+    for i,index in enumerate(route):
+        if nodes[index]["label"] == "Depot":
+            folium.Marker([nodes[index]["lat"],nodes[index]["lon"]],tooltip="Depot (Start)",icon=folium.Icon(color="black", icon="home")).add_to(m)
+        else:
+            folium.Marker([nodes[index]["lat"],nodes[index]["lon"]],tooltip=f'Stop {i}: {nodes[index]["label"]}',icon=folium.Icon(color="blue")).add_to(m)
     st_folium(m,width=None,height=430,returned_objects=[],key="driver_map")
     a,b=st.columns(2)
     if a.button("Confirm arrival  →",use_container_width=True):
