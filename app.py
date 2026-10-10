@@ -84,6 +84,12 @@ def admin():
         label = "Depot" if len(nodes) == 0 else f"Emergency {len(nodes)}"
         if len(nodes) < 15 and not any(abs(n["lat"]-lat)<.0001 and abs(n["lon"]-lon)<.0001 for n in nodes): db.add_node(lat, lon, label); st.rerun()
     selected = st.multiselect("Select drivers for dispatch", [d["username"] for d in drivers], default=[d["username"] for d in drivers[:1]])
+    with st.expander("Register new driver"):
+        c1, c2, c3 = st.columns([2,2,1])
+        new_driver = c1.text_input("Driver ID", key="nd")
+        new_pass = c2.text_input("Password", type="password", key="np")
+        if c3.button("Register"): 
+            if new_driver and new_pass: db.add_driver(new_driver, new_pass); st.rerun()
     a,b = st.columns([3,1]); dispatch = a.button("Calculate fleet route  →", use_container_width=True); clear = b.button("Clear emergencies", use_container_width=True)
     if clear: db.clear_nodes(); st.rerun()
     if dispatch:

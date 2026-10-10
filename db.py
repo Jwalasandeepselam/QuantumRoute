@@ -142,7 +142,23 @@ def get_driver_state(username):
 def get_all_drivers():
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT username, lat, lon, current_stop_index FROM driver_state")
+    c.execute('''
+        SELECT u.username, d.lat, d.lon, d.current_stop_index 
+        FROM users u 
+        LEFT JOIN driver_state d ON u.username = d.username 
+        WHERE u.role = 'Driver'
+    ''')
     rows = c.fetchall()
     conn.close()
     return [{"username": r[0], "lat": r[1], "lon": r[2], "current_stop_index": r[3]} for r in rows]
+
+def add_driver(username, password):
+    conn = get_connection()
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, 'Driver')", (username, password))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass
+    finally:
+        conn.close()
