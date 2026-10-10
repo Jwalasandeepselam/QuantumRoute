@@ -66,7 +66,7 @@ def admin():
     nodes, drivers = db.get_nodes(), db.get_all_drivers()
     active = sum(1 for d in drivers if d["lat"] is not None)
     st.markdown(f'<div class="panel mist"><div class="eyebrow">Command center / fleet preparation</div><h1 class="section" style="font-size:42px">Build a route the field team can trust.</h1><p class="copy">Place emergencies, set their priority, and allocate the response fleet across validated road geometry.</p><div class="stats"><div class="stat"><b>{len(nodes)}/15</b><span>Active emergencies</span></div><div class="stat"><b>{len(drivers)}</b><span>Drivers available</span></div><div class="stat"><b>{active}</b><span>Live locations</span></div></div></div>', unsafe_allow_html=True)
-    m = folium.Map([20.5937, 78.9629], zoom_start=5, tiles="CartoDB positron")
+    m = folium.Map([20.5937, 78.9629], zoom_start=5, tiles="OpenStreetMap")
     for node in nodes: folium.Marker([node["lat"],node["lon"]], tooltip=node["label"], icon=folium.Icon(color="darkred" if node["priority"] == "Code Red" else "blue")).add_to(m)
     for driver in drivers:
         if driver["lat"] is not None: folium.Marker([driver["lat"],driver["lon"]], tooltip=f'{driver["username"]} / live', icon=folium.Icon(color="red",icon="ambulance",prefix="fa")).add_to(m)
@@ -104,9 +104,12 @@ def driver():
     if max(route) >= len(nodes): st.error("The emergency network changed. Ask command to recalculate."); return
     remaining=sum(durations[current:]) if current<len(durations) else 0
     if st.session_state.traffic_override: remaining *= .75
-    label=nodes[route[min(current,len(route)-1)]]["label"]
-    st.markdown(f'<div class="panel mist"><div class="eyebrow">Active mission / response sequence</div><h1 class="section" style="font-size:42px">Next destination: {label}</h1><div class="stats"><div class="stat"><b>{round(remaining/60)} min</b><span>Arrival estimate</span></div><div class="stat"><b>{max(0,len(route)-current-1)}</b><span>Stops remaining</span></div><div class="stat"><b>{"Priority" if st.session_state.traffic_override else "Standard"}</b><span>Road priority</span></div></div></div>',unsafe_allow_html=True)
-    m=folium.Map([nodes[route[0]]["lat"],nodes[route[0]]["lon"]],zoom_start=13,tiles="CartoDB positron")
+    if current >= len(route):
+        st.markdown('<div class="panel mist"><div class="eyebrow">Active mission / response sequence</div><h1 class="section" style="font-size:42px">Mission Complete</h1><p class="copy">All deliveries are finished. Returning to depot.</p></div>', unsafe_allow_html=True)
+    else:
+        label=nodes[route[current]]["label"]
+        st.markdown(f'<div class="panel mist"><div class="eyebrow">Active mission / response sequence</div><h1 class="section" style="font-size:42px">Next destination: {label}</h1><div class="stats"><div class="stat"><b>{round(remaining/60)} min</b><span>Arrival estimate</span></div><div class="stat"><b>{max(0,len(route)-current-1)}</b><span>Stops remaining</span></div><div class="stat"><b>{"Priority" if st.session_state.traffic_override else "Standard"}</b><span>Road priority</span></div></div></div>',unsafe_allow_html=True)
+    m=folium.Map([nodes[route[0]]["lat"],nodes[route[0]]["lon"]],zoom_start=13,tiles="OpenStreetMap")
     for geom in geoms:folium.PolyLine(geom,color="#8b8b8b",weight=5,dash_array="6").add_to(m)
     for geom in geoms[:current]:folium.PolyLine(geom,color="#2b59d1",weight=6).add_to(m)
     for i,index in enumerate(route):folium.Marker([nodes[index]["lat"],nodes[index]["lon"]],tooltip=f'Stop {i+1}: {nodes[index]["label"]}',icon=folium.Icon(color="blue")).add_to(m)
