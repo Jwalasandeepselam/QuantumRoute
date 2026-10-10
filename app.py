@@ -1,275 +1,128 @@
-import streamlit as st
+import math
+import random
+
 import folium
-from streamlit_folium import st_folium
+import streamlit as st
 from streamlit_autorefresh import st_autorefresh
-import time
+from streamlit_folium import st_folium
+
+import db
 import osrm_helper
 import quantum_solver
-import db
 
-def init_session_state():
-    """Initialize basic auth session state."""
+
+def init_state():
     db.init_db()
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-    if "username" not in st.session_state:
-        st.session_state.username = None
-    if "role" not in st.session_state:
-        st.session_state.role = None
+    for key, value in {"logged_in": False, "username": None, "role": None, "traffic_override": False}.items():
+        st.session_state.setdefault(key, value)
+
+
+def design():
+    st.markdown("""<style>
+    :root{--p:#f6f3f1;--b:#2b59d1;--m:#cfdaf5;--i:#242424;--g:#4e4d4d;--s:#797776;--a:#cecac8}.stApp{background:var(--p);color:var(--i);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.block-container{max-width:1432px;padding:0 40px 64px}#MainMenu,footer,header{visibility:hidden}.banner{background:#000;color:var(--p);margin:0 -40px 28px;padding:11px 40px;display:flex;justify-content:space-between;font-size:11px;letter-spacing:.06em;text-transform:uppercase}.nav{display:flex;justify-content:space-between;align-items:center;padding:14px 0 27px;border-bottom:1px solid var(--a)}.brand,.display,.section{font-family:Georgia,serif;font-weight:400;letter-spacing:-.05em}.brand{font-size:28px}.pill{border:1px solid var(--a);border-radius:99px;padding:8px 12px;color:var(--g);font-size:11px}.dot{background:#3aa65e;width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:8px}.eyebrow{color:var(--s);font-size:11px;letter-spacing:.07em;text-transform:uppercase}.display{font-size:clamp(44px,6vw,78px);line-height:1.02;margin:15px 0 20px}.section{font-size:34px;line-height:1.08;margin:8px 0 14px}.blue{color:var(--b)}.copy{color:var(--g);font-size:15px;line-height:1.55;max-width:650px}.hero{padding:66px 0 44px}.panel{border:1px solid var(--a);border-radius:40px;padding:32px;background:#ffffff35;margin:22px 0}.mist{background:var(--m);border-color:transparent}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:28px}.stat{border:1px solid var(--a);border-radius:22px;padding:16px;background:#ffffff45}.stat b{display:block;font:400 27px Georgia,serif;margin-bottom:7px}.stat span{font-size:10px;text-transform:uppercase;color:var(--s);letter-spacing:.05em}.stButton>button{border-radius:99px;border:1px solid var(--i);background:var(--i);color:#fff;font:12px ui-monospace,monospace;letter-spacing:.04em;text-transform:uppercase;min-height:46px}.stButton>button:hover{background:var(--b);border-color:var(--b)}div[data-testid='stTextInput'] input,div[data-testid='stMultiSelect'] div[data-baseweb='select']>div{border-radius:14px;border-color:var(--a);background:transparent}@media(max-width:700px){.block-container{padding:0 20px 40px}.banner{margin:0 -20px 20px;padding:10px 20px}.banner span:last-child{display:none}.stats{grid-template-columns:1fr}.panel{padding:24px;border-radius:28px}}
+    </style>""", unsafe_allow_html=True)
+
+
+def shell(label):
+    st.markdown(f'<div class="banner"><span>QuantumRoute / live dispatch interface</span><span>System integrity: nominal</span></div><div class="nav"><span class="brand">QuantumRoute</span><span class="pill"><i class="dot"></i>{label}</span></div>', unsafe_allow_html=True)
+
 
 def login():
-    st.title("🚑 QuantumRoute Login")
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit_button = st.form_submit_button("Login")
-        
-        if submit_button:
-            conn = db.get_connection()
-            c = conn.cursor()
-            c.execute("SELECT role FROM users WHERE username=? AND password=?", (username, password))
-            row = c.fetchone()
-            conn.close()
+    shell("SECURE ACCESS")
+    left, right = st.columns([1.2, .8], gap="large")
+    with left:
+        st.markdown('<section class="hero"><div class="eyebrow">Emergency logistics, reconciled in real time</div><h1 class="display">Every minute is a <span class="blue">decision.</span></h1><p class="copy">Assign emergency response routes across a fleet, track execution, and retain operational control from one calm interface.</p><div class="stats"><div class="stat"><b>QAOA</b><span>Route solver</span></div><div class="stat"><b>VRP</b><span>Fleet allocation</span></div><div class="stat"><b>LIVE</b><span>Driver telemetry</span></div></div></section>', unsafe_allow_html=True)
+    with right:
+        st.markdown('<div class="panel mist"><div class="eyebrow">Authorized operators</div><h2 class="section">Enter the command layer.</h2>', unsafe_allow_html=True)
+        with st.form("login"):
+            username = st.text_input("Operator ID", placeholder="admin, driver1, or driver2")
+            password = st.text_input("Access key", type="password")
+            submit = st.form_submit_button("Enter workspace  →", use_container_width=True)
+        st.markdown('<p class="copy" style="font-size:12px">Demo: admin/admin123 or driver1/driver123.</p></div>', unsafe_allow_html=True)
+        if submit:
+            with db.get_connection() as conn:
+                row = conn.execute("SELECT role FROM users WHERE username=? AND password=?", (username, password)).fetchone()
             if row:
-                st.session_state.logged_in = True
-                st.session_state.username = username
-                st.session_state.role = row[0]
+                st.session_state.logged_in, st.session_state.username, st.session_state.role = True, username, row[0]
                 st.rerun()
-            else:
-                st.error("Invalid username or password")
+            st.error("The operator ID or access key is not recognized.")
 
-def logout():
-    st.session_state.logged_in = False
-    st.session_state.username = None
-    st.session_state.role = None
-    st.rerun()
 
-def admin_dashboard():
-    st.header("👮 Officer Command Center")
-    st.info("💡 Tip: Drop pins to create emergencies, then Calculate VRP Route.")
-    
-    # Auto-refresh every 3 seconds to see live driver updates
-    st_autorefresh(interval=3000, key="admin_refresh")
-    
-    # Load nodes from DB
-    nodes = db.get_nodes()
-    
-    # Load driver states from DB
-    drivers = db.get_all_drivers()
-    
-    m = folium.Map(location=[20.5937, 78.9629], zoom_start=5)
-    
-    # Plot emergencies
-    for node in nodes:
-        folium.Marker(
-            location=[node['lat'], node['lon']],
-            popup=node['label'],
-            tooltip=node['label'],
-            icon=folium.Icon(color="darkred" if node.get('priority') == 'Code Red' else "blue", icon="warning-sign" if node.get('priority') == 'Code Red' else "info-sign")
-        ).add_to(m)
-        
-    # Plot live drivers
+def clusters(coords, count):
+    if count >= len(coords): return [[i] for i in range(len(coords))]
+    random.seed(42); centers = random.sample(coords, count)
+    for _ in range(10):
+        groups = [[] for _ in centers]
+        for index, coordinate in enumerate(coords):
+            nearest = min(range(len(centers)), key=lambda i: math.hypot(coordinate[0]-centers[i][0], coordinate[1]-centers[i][1]))
+            groups[nearest].append(index)
+        for i, group in enumerate(groups):
+            if group: centers[i] = (sum(coords[j][0] for j in group)/len(group), sum(coords[j][1] for j in group)/len(group))
+    return [group for group in groups if group]
+
+
+def admin():
+    shell("OFFICER COMMAND"); st_autorefresh(interval=3000, key="fleet_refresh")
+    nodes, drivers = db.get_nodes(), db.get_all_drivers()
+    active = sum(1 for d in drivers if d["lat"] is not None)
+    st.markdown(f'<div class="panel mist"><div class="eyebrow">Command center / fleet preparation</div><h1 class="section" style="font-size:42px">Build a route the field team can trust.</h1><p class="copy">Place emergencies, set their priority, and allocate the response fleet across validated road geometry.</p><div class="stats"><div class="stat"><b>{len(nodes)}/15</b><span>Active emergencies</span></div><div class="stat"><b>{len(drivers)}</b><span>Drivers available</span></div><div class="stat"><b>{active}</b><span>Live locations</span></div></div></div>', unsafe_allow_html=True)
+    m = folium.Map([20.5937, 78.9629], zoom_start=5, tiles="CartoDB positron")
+    for node in nodes: folium.Marker([node["lat"],node["lon"]], tooltip=node["label"], icon=folium.Icon(color="darkred" if node["priority"] == "Code Red" else "blue")).add_to(m)
     for driver in drivers:
-        if driver['lat'] is not None and driver['lon'] is not None:
-            folium.Marker(
-                location=[driver['lat'], driver['lon']],
-                tooltip=f"🚑 {driver['username']} (Live)",
-                icon=folium.Icon(color="red", icon="ambulance", prefix='fa')
-            ).add_to(m)
-            
-    map_data = st_folium(m, width=700, height=500, returned_objects=["last_clicked"])
-    
-    if map_data and map_data.get('last_clicked'):
-        raw_lat = map_data['last_clicked']['lat']
-        raw_lon = map_data['last_clicked']['lng']
-        lon, lat = osrm_helper.get_nearest_road(raw_lon, raw_lat)
-        
-        is_duplicate = any(abs(n['lat'] - lat) < 0.0001 and abs(n['lon'] - lon) < 0.0001 for n in nodes)
-        if not is_duplicate:
-            if len(nodes) < 15:
-                db.add_node(lat, lon, f"Emergency {len(nodes)+1}")
-                st.rerun()
-            else:
-                st.warning("Maximum 15 hubs allowed for prototype.")
-                
-    st.write("---")
-    
-    driver_usernames = [d['username'] for d in drivers] if drivers else ["driver1", "driver2"]
-    selected_drivers = st.multiselect("🚑 Select Drivers for Dispatch", driver_usernames, default=driver_usernames[:1] if driver_usernames else [])
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("⚛️ Calculate Quantum VRP Route", use_container_width=True, type="primary"):
-            if len(nodes) < 3:
-                st.warning("Please add at least 3 hubs.")
-            elif not selected_drivers:
-                st.warning("Please select at least one driver.")
-            else:
-                with st.spinner("Running QAOA + VRP Clustering..."):
-                    coords = [[n['lat'], n['lon']] for n in nodes]
-                    
-                    # 1. Clustering (VRP)
-                    k = len(selected_drivers)
-                    if k >= len(coords):
-                        clusters = [[i] for i in range(len(coords))]
-                    else:
-                        import math, random
-                        random.seed(42)
-                        centroids = random.sample(coords, k)
-                        clusters = [[] for _ in range(k)]
-                        for _ in range(10):
-                            clusters = [[] for _ in range(k)]
-                            for i, c in enumerate(coords):
-                                dists = [math.hypot(c[0]-cen[0], c[1]-cen[1]) for cen in centroids]
-                                clusters[dists.index(min(dists))].append(i)
-                            for i in range(k):
-                                if clusters[i]:
-                                    centroids[i] = (sum(coords[j][0] for j in clusters[i])/len(clusters[i]), sum(coords[j][1] for j in clusters[i])/len(clusters[i]))
-                        clusters = [c for c in clusters if c] # remove empty
-                    
-                    # 2. Quantum Routing for each Driver
-                    for k_idx, cluster_indices in enumerate(clusters):
-                        if k_idx >= len(selected_drivers): break
-                        driver_username = selected_drivers[k_idx]
-                        
-                        cluster_coords = [coords[i] for i in cluster_indices]
-                        sub_dist_matrix = osrm_helper.get_distance_matrix(cluster_coords)
-                        sub_route = quantum_solver.solve_route(sub_dist_matrix)
-                        global_route = [cluster_indices[i] for i in sub_route]
-                        
-                        route_geometries = []
-                        route_durations = []
-                        for i in range(len(global_route) - 1):
-                            idx1 = global_route[i]
-                            idx2 = global_route[i+1]
-                            geom, dur = osrm_helper.get_route_geometry(coords[idx1][1], coords[idx1][0], coords[idx2][1], coords[idx2][0])
-                            route_geometries.append(geom)
-                            route_durations.append(dur)
-                            
-                        db.update_driver_route(driver_username, global_route, route_geometries, route_durations)
-                        first_node_idx = global_route[0]
-                        db.update_driver_location(driver_username, coords[first_node_idx][0], coords[first_node_idx][1], 0)
-                        
-                    st.success("✅ VRP Route Optimized! Dispatched to Fleet.")
-    with col2:
-        if st.button("🗑️ Clear All Emergencies", use_container_width=True):
-            db.clear_nodes()
-            st.rerun()
-            
-    st.subheader("📋 Hub Management (Active Emergencies)")
-    for n in nodes:
-        with st.container():
-            c1, c2, c3 = st.columns([3, 2, 1])
-            new_label = c1.text_input("Name", value=n['label'], key=f"name_{n['id']}")
-            new_priority = c2.selectbox("Priority", ["Normal", "Code Red"], index=0 if n.get('priority', 'Normal') == 'Normal' else 1, key=f"pri_{n['id']}")
-            
-            # If changed, update DB
-            if new_label != n['label'] or new_priority != n.get('priority', 'Normal'):
-                db.update_node(n['id'], new_label, new_priority)
-                st.rerun()
-                
-            if c3.button("Delete", key=f"del_{n['id']}"):
-                db.delete_node(n['id'])
-                st.rerun()
+        if driver["lat"] is not None: folium.Marker([driver["lat"],driver["lon"]], tooltip=f'{driver["username"]} / live', icon=folium.Icon(color="red",icon="ambulance",prefix="fa")).add_to(m)
+    clicked = st_folium(m, width=None, height=500, returned_objects=["last_clicked"], key="command_map")
+    if clicked and clicked.get("last_clicked"):
+        point = clicked["last_clicked"]; lon, lat = osrm_helper.get_nearest_road(point["lng"], point["lat"])
+        if len(nodes) < 15 and not any(abs(n["lat"]-lat)<.0001 and abs(n["lon"]-lon)<.0001 for n in nodes): db.add_node(lat, lon, f"Emergency {len(nodes)+1}"); st.rerun()
+    selected = st.multiselect("Select drivers for dispatch", [d["username"] for d in drivers], default=[d["username"] for d in drivers[:1]])
+    a,b = st.columns([3,1]); dispatch = a.button("Calculate fleet route  →", use_container_width=True); clear = b.button("Clear emergencies", use_container_width=True)
+    if clear: db.clear_nodes(); st.rerun()
+    if dispatch:
+        if len(nodes) < 3 or not selected: st.warning("Add at least three emergencies and select a driver.")
+        else:
+            with st.spinner("Allocating the fleet across the road network…"):
+                coords = [[n["lat"],n["lon"]] for n in nodes]
+                for username, group in zip(selected, clusters(coords, len(selected))):
+                    route = [group[i] for i in quantum_solver.solve_route(osrm_helper.get_distance_matrix([coords[i] for i in group]))]
+                    geoms, durations = [], []
+                    for start, end in zip(route, route[1:]):
+                        geom, duration = osrm_helper.get_route_geometry(coords[start][1],coords[start][0],coords[end][1],coords[end][0]); geoms.append(geom); durations.append(duration)
+                    db.update_driver_route(username, route, geoms, durations); db.update_driver_location(username, coords[route[0]][0], coords[route[0]][1], 0)
+            st.success("Fleet routes dispatched.")
+    st.markdown('<div class="panel"><div class="eyebrow">Emergency management</div><h2 class="section">Name and prioritize every active incident.</h2></div>', unsafe_allow_html=True)
+    for node in nodes:
+        x,y,z = st.columns([3,2,1]); name=x.text_input("Incident name",node["label"],key=f'n{node["id"]}'); priority=y.selectbox("Priority",["Normal","Code Red"],index=1 if node["priority"]=="Code Red" else 0,key=f'p{node["id"]}')
+        if name != node["label"] or priority != node["priority"]: db.update_node(node["id"],name,priority);st.rerun()
+        if z.button("Remove",key=f'd{node["id"]}'):db.delete_node(node["id"]);st.rerun()
 
-def driver_dashboard():
-    st.header(f"🚑 Mobile Interface ({st.session_state.username})")
-    
-    driver_state = db.get_driver_state(st.session_state.username)
-    nodes = db.get_nodes()
-    
-    if not driver_state or not driver_state["assigned_route"]:
-        st.warning("⚠️ No active route assigned by Dispatch. Awaiting orders...")
-        return
-        
-    route = driver_state["assigned_route"]
-    current_idx = driver_state["current_stop_index"]
-    geometries = driver_state["route_geometries"]
-    durations = driver_state["route_durations"]
-    
-    # Check if admin deleted nodes rendering our route indices invalid
-    if max(route) >= len(nodes):
-         st.error("Admin modified the nodes after routing. Please ask admin to Recalculate.")
-         return
-    
-    traffic_override = st.session_state.get('traffic_override', False)
-    
-    first_node_idx = route[0]
-    m = folium.Map(location=[nodes[first_node_idx]['lat'], nodes[first_node_idx]['lon']], zoom_start=13)
-    
-    remaining_duration_sec = sum(durations[current_idx:]) if current_idx < len(durations) else 0
-    if traffic_override:
-        remaining_duration_sec *= 0.75
-    eta_mins = int(remaining_duration_sec // 60)
-    
-    for geom in geometries:
-        folium.PolyLine(locations=geom, color="gray", weight=5, dash_array="5").add_to(m)
 
-    for i in range(current_idx):
-        if i < len(geometries):
-            folium.PolyLine(locations=geometries[i], color="green", weight=6).add_to(m)
-            
-    for i, n_idx in enumerate(route):
-        folium.Marker(
-            location=[nodes[n_idx]['lat'], nodes[n_idx]['lon']],
-            popup=f"Stop {i}",
-            tooltip=f"Stop {i}: {nodes[n_idx]['label']}",
-            icon=folium.Icon(color="blue", icon="info-sign")
-        ).add_to(m)
-        
-    if current_idx < len(route):
-        curr_node_idx = route[current_idx]
-        folium.Marker(
-            location=[nodes[curr_node_idx]['lat'], nodes[curr_node_idx]['lon']],
-            tooltip=f"🚑 {st.session_state.username} Live GPS",
-            icon=folium.Icon(color="red", icon="ambulance", prefix='fa')
-        ).add_to(m)
-        
-    st_folium(m, width=700, height=400, returned_objects=[])
-    
-    st.write("---")
-    if current_idx >= len(route):
-        st.success("✅ All deliveries completed! Returning to Depot.")
-    else:
-        st.info(f"⏱️ **Estimated Time of Arrival (ETA): {eta_mins} mins**")
-        st.write(f"**Current Stop:** Stop {current_idx} ({nodes[route[current_idx]]['label']})")
-        
-    if st.button("📡 Transmit GPS to Cloud (Next Stop)", use_container_width=True, type="primary"):
-        if current_idx < len(route):
-            next_idx = current_idx + 1
-            node_idx = route[next_idx] if next_idx < len(route) else route[-1]
-            lat = nodes[node_idx]['lat']
-            lon = nodes[node_idx]['lon']
-            db.update_driver_location(st.session_state.username, lat, lon, next_idx)
-            st.rerun()
-            
-    st.write("---")
-    st.subheader("Advanced Quantum Fleet Features")
-    
-    is_override = st.session_state.get('traffic_override', False)
-    if st.button("🚦 Activate City Traffic Light Preemption", type="secondary" if not is_override else "primary"):
-        st.session_state.traffic_override = not is_override
-        st.rerun()
-        
-    if is_override:
-        st.success("🟢 City infrastructure engaged! All upcoming traffic lights locked to GREEN.")
+def driver():
+    shell("DRIVER EXECUTION"); state, nodes = db.get_driver_state(st.session_state.username), db.get_nodes()
+    if not state or not state["assigned_route"]:
+        st.markdown('<div class="panel mist"><div class="eyebrow">Awaiting command center</div><h1 class="section">No active dispatch has been assigned.</h1><p class="copy">The command team will publish an optimized route before field navigation begins.</p></div>',unsafe_allow_html=True); return
+    route,current,geoms,durations = state["assigned_route"],state["current_stop_index"],state["route_geometries"],state["route_durations"]
+    if max(route) >= len(nodes): st.error("The emergency network changed. Ask command to recalculate."); return
+    remaining=sum(durations[current:]) if current<len(durations) else 0
+    if st.session_state.traffic_override: remaining *= .75
+    label=nodes[route[min(current,len(route)-1)]]["label"]
+    st.markdown(f'<div class="panel mist"><div class="eyebrow">Active mission / response sequence</div><h1 class="section" style="font-size:42px">Next destination: {label}</h1><div class="stats"><div class="stat"><b>{round(remaining/60)} min</b><span>Arrival estimate</span></div><div class="stat"><b>{max(0,len(route)-current-1)}</b><span>Stops remaining</span></div><div class="stat"><b>{"Priority" if st.session_state.traffic_override else "Standard"}</b><span>Road priority</span></div></div></div>',unsafe_allow_html=True)
+    m=folium.Map([nodes[route[0]]["lat"],nodes[route[0]]["lon"]],zoom_start=13,tiles="CartoDB positron")
+    for geom in geoms:folium.PolyLine(geom,color="#8b8b8b",weight=5,dash_array="6").add_to(m)
+    for geom in geoms[:current]:folium.PolyLine(geom,color="#2b59d1",weight=6).add_to(m)
+    for i,index in enumerate(route):folium.Marker([nodes[index]["lat"],nodes[index]["lon"]],tooltip=f'Stop {i+1}: {nodes[index]["label"]}',icon=folium.Icon(color="blue")).add_to(m)
+    st_folium(m,width=None,height=430,returned_objects=[],key="driver_map")
+    a,b=st.columns(2)
+    if a.button("Confirm arrival  →",use_container_width=True):
+        next_stop=min(current+1,len(route)); index=route[min(next_stop,len(route)-1)]; db.update_driver_location(st.session_state.username,nodes[index]["lat"],nodes[index]["lon"],next_stop);st.rerun()
+    if b.button("Deactivate road priority" if st.session_state.traffic_override else "Activate road priority",use_container_width=True):st.session_state.traffic_override=not st.session_state.traffic_override;st.rerun()
+
 
 def main():
-    st.set_page_config(page_title="QuantumRoute", layout="centered", page_icon="🚑")
-    init_session_state()
-    
-    if not st.session_state.logged_in:
-        login()
-    else:
-        with st.sidebar:
-            st.write(f"Logged in as: **{st.session_state.username}** ({st.session_state.role})")
-            if st.button("🚪 Logout"):
-                logout()
-                
-        if st.session_state.role == "Admin":
-            admin_dashboard()
-        elif st.session_state.role == "Driver":
-            driver_dashboard()
+    st.set_page_config(page_title="QuantumRoute — Dispatch",page_icon="◌",layout="wide"); init_state(); design()
+    if not st.session_state.logged_in: login()
+    elif st.session_state.role == "Admin": admin()
+    else: driver()
+    if st.session_state.logged_in and st.button("Sign out"): st.session_state.logged_in=False; st.session_state.username=None; st.session_state.role=None; st.rerun()
 
-if __name__ == "__main__":
-    main()
+
+if __name__ == "__main__": main()

@@ -25,9 +25,14 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             lat REAL,
             lon REAL,
-            label TEXT
+            label TEXT,
+            priority TEXT DEFAULT 'Normal'
         )
     ''')
+    # Migrate databases created before incident priorities existed.
+    columns = {row[1] for row in c.execute("PRAGMA table_info(nodes)")}
+    if "priority" not in columns:
+        c.execute("ALTER TABLE nodes ADD COLUMN priority TEXT DEFAULT 'Normal'")
     
     # Drivers state table
     c.execute('''
