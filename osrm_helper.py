@@ -49,3 +49,22 @@ def get_distance_matrix(nodes):
         x = delta_lon * np.cos(latitude.mean())
         y = latitude[:, None] - latitude[None, :]
         return 6_371_000.0 * np.hypot(x, y)
+
+def get_route_geometry(lon1, lat1, lon2, lat2):
+    """Get the road geometry and duration between two points using OSRM."""
+    url = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=full&geometries=geojson"
+    try:
+        response = requests.get(url, timeout=3)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("code") == "Ok":
+                route = data["routes"][0]
+                duration = route.get("duration", 0) # in seconds
+                # GeoJSON coordinates are [lon, lat], folium expects [lat, lon]
+                coords = [[lat, lon] for lon, lat in route["geometry"]["coordinates"]]
+                return coords, duration
+    except Exception:
+        pass
+    # Fallback to straight line
+    return [[lat1, lon1], [lat2, lon2]], 0
+

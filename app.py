@@ -97,8 +97,22 @@ def admin_dashboard():
             with st.spinner("Running QAOA Quantum Optimization..."):
                 coords = [[n['lat'], n['lon']] for n in nodes]
                 dist_matrix = osrm_helper.get_distance_matrix(coords)
-                st.session_state.best_route = quantum_solver.solve_route(dist_matrix)
-                st.session_state.current_stop_index = 0 # Reset driver progress
+                best_route = quantum_solver.solve_route(dist_matrix)
+                
+                route_geometries = []
+                route_durations = []
+                # Get geometry for each segment in the route
+                for i in range(len(best_route) - 1):
+                    idx1 = best_route[i]
+                    idx2 = best_route[i+1]
+                    geom, dur = osrm_helper.get_route_geometry(coords[idx1][1], coords[idx1][0], coords[idx2][1], coords[idx2][0])
+                    route_geometries.append(geom)
+                    route_durations.append(dur)
+                
+                st.session_state.best_route = best_route
+                st.session_state.route_geometries = route_geometries
+                st.session_state.route_durations = route_durations
+                st.session_state.current_stop_index = 0
                 st.success("✅ Route Optimized! Ready for Driver Dispatch.")
 
 def driver_dashboard():
@@ -113,27 +127,33 @@ def driver_dashboard():
     route = st.session_state.best_route
     current_idx = st.session_state.current_stop_index
     
+    # Check if traffic override is active
+    traffic_override = st.session_state.get('traffic_override', False)
+
     # 1. Route Map Visualization
     first_node_idx = route[0]
     m = folium.Map(location=[nodes[first_node_idx]['lat'], nodes[first_node_idx]['lon']], zoom_start=12)
     
-    # STEP A: Draw the FULL route in GRAY first
-    full_route_coords = []
-    for n_idx in route:
-        full_route_coords.append([nodes[n_idx]['lat'], nodes[n_idx]['lon']])
+    geometries = st.session_state.get('route_geometries', [])
+    durations = st.session_state.get('route_durations', [])
     
-    if len(full_route_coords) > 1:
-        folium.PolyLine(locations=full_route_coords, color="gray", weight=5, dash_array="5").add_to(m)
+    # Calculate ETA for remaining segments
+    remaining_duration_sec = sum(durations[current_idx:]) if current_idx < len(durations) else 0
+    
+    if traffic_override:
+        # Reduce ETA by 25% to simulate green lights override
+        remaining_duration_sec *= 0.75
+        
+    eta_mins = int(remaining_duration_sec // 60)
+    
+    # STEP A: Draw the FULL route in GRAY using actual road tracing
+    for geom in geometries:
+        folium.PolyLine(locations=geom, color="gray", weight=5, dash_array="5").add_to(m)
 
-    # STEP B: Draw the COMPLETED portion in GREEN on top
-    completed_coords = []
-    for i in range(current_idx + 1): 
-        if i < len(route):
-            n_idx = route[i]
-            completed_coords.append([nodes[n_idx]['lat'], nodes[n_idx]['lon']])
-            
-    if len(completed_coords) > 1:
-        folium.PolyLine(locations=completed_coords, color="green", weight=6).add_to(m)
+    # STEP B: Draw the COMPLETED portion in GREEN using actual road tracing
+    for i in range(current_idx):
+        if i < len(geometries):
+            folium.PolyLine(locations=geometries[i], color="green", weight=6).add_to(m)
         
     # STEP C: Add regular markers for all stops
     for i, n_idx in enumerate(route):
@@ -160,6 +180,8 @@ def driver_dashboard():
     if current_idx >= len(route):
         st.success("✅ All deliveries completed! Returning to Depot.")
     else:
+        # Highlight ETA
+        st.info(f"⏱️ **Estimated Time of Arrival (ETA): {eta_mins} mins**")
         st.write(f"**Current Stop:** Stop {current_idx} ({nodes[route[current_idx]]['label']})")
         st.write(f"**Progress:** {current_idx} / {len(route) - 1} stops completed")
         
@@ -183,6 +205,18 @@ def driver_dashboard():
         
     if st.button("🚨 SIMULATE ACCIDENT / SOS", type="primary"):
         st.error("🚨 EMERGENCY SOS TRIGGERED: GPS Coordinates sent to Officer Dashboard!")
+        
+    st.write("---")
+    st.subheader("Advanced Quantum Fleet Features")
+    
+    # Feature Google Maps does NOT have: Traffic Light Preemption
+    is_override = st.session_state.get('traffic_override', False)
+    if st.button("🚦 Activate City Traffic Light Preemption (Emergency)", type="secondary" if not is_override else "primary"):
+        st.session_state.traffic_override = not is_override
+        st.rerun()
+        
+    if is_override:
+        st.success("🟢 City infrastructure engaged! All upcoming traffic lights locked to GREEN. ETA reduced by 25%.")
 
 def main():
     st.set_page_config(page_title="QuantumRoute", layout="centered", page_icon="🚑")
