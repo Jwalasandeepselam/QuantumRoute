@@ -68,3 +68,17 @@ def get_route_geometry(lon1, lat1, lon2, lat2):
     # Fallback to straight line
     return [[lat1, lon1], [lat2, lon2]], 0
 
+def get_nearest_road(lon, lat):
+    """Snap a coordinate to the nearest road using OSRM Nearest service."""
+    url = f"http://router.project-osrm.org/nearest/v1/driving/{lon},{lat}"
+    try:
+        response = requests.get(url, timeout=3)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("code") == "Ok" and data.get("waypoints"):
+                snapped_lon, snapped_lat = data["waypoints"][0]["location"]
+                return snapped_lon, snapped_lat
+    except Exception:
+        pass
+    return lon, lat
+

@@ -98,5 +98,5 @@ def solve_route(distance_matrix):
         start = route.index(0)
         return route[start:] + route[:start]
     except Exception:
-        print("⚠️ Quantum timeout: Using Classical Fallback")
+        print("[WARNING] Quantum timeout or error: Using Classical Fallback")
         return _greedy_route(matrix)

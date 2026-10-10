@@ -66,10 +66,12 @@ def admin_dashboard():
         ).add_to(m)
         
     map_data = st_folium(m, width=700, height=500, returned_objects=["last_clicked"])
-    
     if map_data and map_data.get('last_clicked'):
-        lat = map_data['last_clicked']['lat']
-        lon = map_data['last_clicked']['lng']
+        raw_lat = map_data['last_clicked']['lat']
+        raw_lon = map_data['last_clicked']['lng']
+        
+        # Snap the dropped pin to the nearest road just like Google Maps
+        lon, lat = osrm_helper.get_nearest_road(raw_lon, raw_lat)
         
         is_duplicate = any(
             abs(node['lat'] - lat) < 0.0001 and abs(node['lon'] - lon) < 0.0001 
