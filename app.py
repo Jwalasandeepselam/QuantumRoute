@@ -103,11 +103,13 @@ def driver_dashboard():
     """Display the Driver Interface."""
     st.header("🚑 Driver Mobile Interface")
     
+    # Initialize current stop index if it doesn't exist
     if "current_stop_index" not in st.session_state:
         st.session_state.current_stop_index = 0
         
+    # CRITICAL CHECK: Ensure Admin actually calculated a route first
     if not st.session_state.admin_nodes or not st.session_state.best_route:
-        st.info("No active route assigned by Officer yet.")
+        st.warning("⚠️ No active route assigned yet. Please log in as Officer and calculate a route first.")
         return
         
     nodes = st.session_state.admin_nodes
@@ -116,51 +118,56 @@ def driver_dashboard():
     
     # 1. Route Map Visualization
     first_node_idx = route[0]
-    m = folium.Map(location=[nodes[first_node_idx]['lat'], nodes[first_node_idx]['lon']], zoom_start=6)
+    m = folium.Map(location=[nodes[first_node_idx]['lat'], nodes[first_node_idx]['lon']], zoom_start=12)
     
-    # Completed segments (Green)
+    # STEP A: Draw the FULL route in GRAY first (Foolproof method)
+    full_route_coords = []
+    for n_idx in route:
+        full_route_coords.append([nodes[n_idx]['lat'], nodes[n_idx]['lon']])
+    
+    if len(full_route_coords) > 1:
+        folium.PolyLine(locations=full_route_coords, color="gray", weight=5, dash_array="5").add_to(m)
+
+    # STEP B: Draw the COMPLETED portion in GREEN on top
     completed_coords = []
-    for i in range(min(current_idx + 1, len(route))):
-        n_idx = route[i]
-        completed_coords.append([nodes[n_idx]['lat'], nodes[n_idx]['lon']])
+    for i in range(current_idx + 1): 
+        if i < len(route):
+            n_idx = route[i]
+            completed_coords.append([nodes[n_idx]['lat'], nodes[n_idx]['lon']])
+            
     if len(completed_coords) > 1:
-        folium.PolyLine(locations=completed_coords, color="green", weight=5).add_to(m)
+        folium.PolyLine(locations=completed_coords, color="green", weight=6).add_to(m)
         
-    # Remaining segments (Gray)
-    remaining_coords = []
-    for i in range(min(current_idx, len(route) - 1), len(route)):
-        n_idx = route[i]
-        remaining_coords.append([nodes[n_idx]['lat'], nodes[n_idx]['lon']])
-    if len(remaining_coords) > 1:
-        folium.PolyLine(locations=remaining_coords, color="gray", weight=5, dash_array="5").add_to(m)
-        
-    # Add regular markers
+    # STEP C: Add regular markers for all stops
     for i, n_idx in enumerate(route):
         folium.Marker(
             location=[nodes[n_idx]['lat'], nodes[n_idx]['lon']],
             popup=f"Stop {i}",
-            tooltip=f"Stop {i}: {nodes[n_idx]['label']}"
+            tooltip=f"Stop {i}: {nodes[n_idx]['label']}",
+            icon=folium.Icon(color="blue", icon="info-sign")
         ).add_to(m)
         
-    # Ambulance Marker
+    # STEP D: Add the Red Ambulance Marker at the current position
     if current_idx < len(route):
         curr_node_idx = route[current_idx]
         folium.Marker(
             location=[nodes[curr_node_idx]['lat'], nodes[curr_node_idx]['lon']],
-            icon=folium.Icon(color="red", icon="info-sign"),
-            tooltip="Ambulance Current Location"
+            tooltip="🚑 Ambulance Current Location",
+            icon=folium.Icon(color="red", icon="road")
         ).add_to(m)
         
-    # returned_objects=[] prevents map interaction from rerunning the app
+    # Render the map
     st_folium(m, width=700, height=400, returned_objects=[])
     
     # 2. Simulation Controls
+    st.write("---")
     if current_idx >= len(route):
         st.success("✅ All deliveries completed! Returning to Depot.")
     else:
         st.write(f"**Current Stop:** Stop {current_idx} ({nodes[route[current_idx]]['label']})")
+        st.write(f"**Progress:** {current_idx} / {len(route) - 1} stops completed")
         
-    if st.button("⏩ Simulate Next Stop", use_container_width=True):
+    if st.button("⏩ Simulate Next Stop", use_container_width=True, type="primary"):
         if current_idx < len(route):
             st.session_state.current_stop_index += 1
             st.rerun()
@@ -179,7 +186,7 @@ def driver_dashboard():
         st.success(f"✅ Inventory updated. Remaining capacity: {100 - units}")
         
     if st.button("🚨 SIMULATE ACCIDENT / SOS", type="primary"):
-        st.error("EMERGENCY SOS TRIGGERED: GPS Coordinates sent to Officer Dashboard!")
+        st.error("🚨 EMERGENCY SOS TRIGGERED: GPS Coordinates sent to Officer Dashboard!")
 
 def main():
     """Main application flow."""
